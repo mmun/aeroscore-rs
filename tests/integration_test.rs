@@ -17,7 +17,16 @@ impl std::fmt::Debug for Point {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let lon_min = (self.longitude - self.longitude.floor()) * 60.;
         let lat_min = (self.latitude - self.latitude.floor()) * 60.;
-        write!(f, "{}  {:03.0}°{:06.3}E  {:03.0}°{:06.3}N  {:4.0}m", self.time, self.longitude.floor(), lon_min, self.latitude.floor(), lat_min, self.altitude)
+        write!(
+            f,
+            "{}  {:03.0}°{:06.3}E  {:03.0}°{:06.3}N  {:4.0}m",
+            self.time,
+            self.longitude.floor(),
+            lon_min,
+            self.latitude.floor(),
+            lat_min,
+            self.altitude
+        )
     }
 }
 
@@ -41,19 +50,22 @@ fn it_works() {
     let fixes = include_str!("fixtures/87ilqqk1.igc")
         .lines()
         .filter(|l| l.starts_with('B'))
-        .filter_map(|line| igc::records::BRecord::parse(&line).ok()
-            .map_or(None, |record| {
-                if seconds_since_midnight(&record.timestamp) >= release_seconds {
-                    Some(Point {
-                        time: record.timestamp,
-                        latitude: record.pos.lat.into(),
-                        longitude: record.pos.lon.into(),
-                        altitude: record.gps_alt,
-                    })
-                } else {
-                    None
-                }
-            }))
+        .filter_map(|line| {
+            igc::records::BRecord::parse(&line)
+                .ok()
+                .map_or(None, |record| {
+                    if seconds_since_midnight(&record.timestamp) >= release_seconds {
+                        Some(Point {
+                            time: record.timestamp,
+                            latitude: record.pos.lat.into(),
+                            longitude: record.pos.lon.into(),
+                            altitude: record.gps_alt,
+                        })
+                    } else {
+                        None
+                    }
+                })
+        })
         .collect::<Vec<_>>();
 
     let result = olc::optimize(&fixes).unwrap();
