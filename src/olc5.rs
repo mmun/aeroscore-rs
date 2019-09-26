@@ -1,8 +1,11 @@
+#![allow(non_snake_case)]
+
 use failure::Error;
+use ndarray::prelude::*;
 use ord_subset::OrdSubsetIterExt;
 
-const LEGS: usize = 6;
-const POINTS: usize = LEGS + 1;
+const L: usize = 6;
+const STRIDE: usize = 4;
 
 pub trait Point: Sync + std::fmt::Debug {
     fn latitude(&self) -> f64;
@@ -41,129 +44,102 @@ impl<T: Point> CenterLatitude for [T] {
 
 #[derive(Debug)]
 pub struct OptimizationResult {
-    pub points: [usize; POINTS],
+    pub indices: [usize; L + 1],
     pub distance: f64,
 }
 
 pub fn optimize<T: Point>(points: &[T]) -> Result<OptimizationResult, Error> {
-    dbg!(points.len());
+    let indices = optimize_waypoints(points);
 
-    let optimal_points = optimal_optimize_and_log_waypoints(points);
-
-    let distance = (0..LEGS)
-        .map(|i| (optimal_points[i], optimal_points[i + 1]))
-        .map(|(i1, i2)| (&route[i1], &route[i2]))
+    let distance = (0..L)
+        .map(|i| (indices[i], indices[i + 1]))
+        .map(|(i1, i2)| (&points[i1], &points[i2]))
         .map(|(fix1, fix2)| haversine_distance(fix1, fix2))
         .sum();
 
-    Ok(OptimizationResult { optimal_points, distance })
+    Ok(OptimizationResult { indices, distance })
 }
 
-fn optimize_and_log_waypoints<T: Point>(geo_points: &[T]) -> [usize; POINTS] {
-    dbg!(num)
-    println!("num: {}", num_points);
+fn optimize_waypoints<T: Point>(points: &[T]) -> [usize; L + 1] {
+    let mut points_index = Vec::new();
 
-    //    let flat_points = to_flat_points(geo_points);
-    // let distance_matrix = calculate_distance_matrix(&flat_points);
+    for i in (0..(points.len() - 1)).step_by(STRIDE) {
+        points_index.push(i);
+    }
+    points_index.push(points.len() - 1);
 
+    let n = points_index.len();
+    dbg!(points_index.len());
 
-    //    const N: usize = num; // Number of points
-    const K: usize = 6; // Maximum number of edges allowed on the path
-    let (distance, indices) = optimize_waypoints(num_points, K, &geo_points, &distances);
+    let mut distances = Array::from_elem((n, n), 0.0);
 
-    let a_index = indices[0];
-    let b_index = indices[1];
-    let c_index = indices[2];
-    let d_index = indices[3];
-    let e_index = indices[4];
-    let f_index = indices[5];
-    let g_index = indices[6];
+    for j in 1..n {
+        for i in 0..j {
+            distances[[i, j]] = haversine_distance(&points[points_index[i]], &points[points_index[j]]);
+        }
+    }
 
-    let a_geo_point = &geo_points[a_index];
-    let b_geo_point = &geo_points[b_index];
-    let c_geo_point = &geo_points[c_index];
-    let d_geo_point = &geo_points[d_index];
-    let e_geo_point = &geo_points[e_index];
-    let f_geo_point = &geo_points[f_index];
-    let g_geo_point = &geo_points[g_index];
+    let mut inadmissable_best_distance;
+    let mut best = (0, 0, 0.0, vec![1]); //Vec::new());
+    let mut dp = Array::from_elem((n, n, L + 1), (0.0, n));
+    let mut dp_sub = Array::from_elem((n, n, L + 1), 0.0);
 
-    println!("{:?}", a_geo_point);
-    println!("{:?}", b_geo_point);
-    println!("{:?}", c_geo_point);
-    println!("{:?}", d_geo_point);
-    println!("{:?}", e_geo_point);
-    println!("{:?}", f_geo_point);
-    println!("{:?}", g_geo_point);
+    for di in (1..n).rev() {
+        dbg!(di);
 
-    [
-        a_index, b_index, c_index, d_index, e_index, f_index, g_index,
-    ]
-}
+        // fill in next dp
+        let i0 = n - 1 - di;
 
-fn optimize_waypoints<T: Point>(
-    N: usize,
-    K: usize,
-    points: &[T]
-) -> (f64, Vec<usize>) {
+        for j in ((i0 + 1)..n).rev() {
+            dp[[i0, j, 1]] = (distances[[i0, j]], i0);
+        }
 
-        let distances = gen_distances(&points);
-
-    // N = number of points
-    // K = number of edges allowed
-
-    // return (0.0, vec![4, 1129, 1666, 4348, 6070, 6681, 7206])
-    // dp[k][i] is a tuple containing information about the longest path using `k` edges and ending at point `i`.
-    // dp[k][i].0 is the total length of the path.
-    // dp[k][i].1 is the index of the previous point before point `i` (i.e. the predecessor) along the path.
-    // This variable is often called "dp" for "dynamic programming", *shrug*.
-    let mut dp = vec![vec![vec![(0.0, 0); N]; K]; N];
-
-    let mut best_i_first = N;
-    let mut best_i_last = N;
-    let mut best_distance = 0.0;
-    let mut best_path = Vec::new();
-
-    for di in (K..N).rev() {
-        /*
-        println!("di = {}", di);
-        // compute next dp
-        {
-            let i_first = N-1 - di;
-
-            for k in 1..K {
-                for j in (i_first+1)..N { // the point we're going to
-                    for i in i_first..j { // the point we're coming from
-                        let total_length = dp[i_first][k - 1][i].0 + distances[i][j];
-                        if dp[i_first][k][j].0 < total_length {
-                            dp[i_first][k][j] = (total_length, i);
-                        }
+        for l in 2..=L {
+            for j in (i0 + 1)..n {
+                for i in i0..j {
+                    if dp[[i0, j, l]].0 < dp[[i0, i, l - 1]].0 + distances[[i, j]] {
+                        dp[[i0, j, l]] = (dp[[i0, i, l - 1]].0 + distances[[i, j]], i);
                     }
                 }
             }
         }
-        */
 
-        for i_first in 0..(N - di) {
-            let i_last = i_first + di;
+        for l in 1..=L {
+            for j in (i0 + 1)..n {
+                for i in i0..j {
+                    if dp_sub[[i0, j, l]] < dp_sub[[i0, i, l]] {
+                        dp_sub[[i0, j, l]] = dp_sub[[i0, i, l]];
+                    }
+                    if dp_sub[[i0, j, l]] < dp_sub[[i0, i, l - 1]] + distances[[i, j]] {
+                        dp_sub[[i0, j, l]] = dp_sub[[i0, i, l - 1]] + distances[[i, j]];
+                    }
+                }
+            }
+        }
 
-            if points[i_first].altitude() > points[i_last].altitude() + 1000 {
+        inadmissable_best_distance = 0.0;
+
+        for i0 in 0..(n - di) {
+            let iL = i0 + di;
+
+            if inadmissable_best_distance < dp_sub[[i0, iL, L]] {
+                inadmissable_best_distance = dp_sub[[i0, iL, L]];
+            }
+
+            if points[points_index[i0]].altitude() > points[points_index[iL]].altitude() + 1000 {
                 continue;
             }
 
-            println!("[{}, {}]  ", i_first, dp[i_first][K - 1][i_last].0);
-            if best_distance < dp[i_first][K - 1][i_last].0 {
-                best_i_first = i_first;
-                best_i_last = i_last;
-                best_distance = dp[i_first][K - 1][i_last].0;
-                best_path = {
-                    let mut path = vec![i_last];
+            if best.2 < dp[[i0, iL, L]].0 {
+                let path = {
+                    let mut path = vec![iL];
 
-                    for k in (1..K).rev() {
+                    for l in (1..=L).rev() {
                         let i = *path.last().unwrap();
-                        path.push(dp[i_first][k][i].1);
+                        path.push(dp[[i0, i, l]].1);
 
                         // We've reached the beginning of the path
-                        if dp[i_first][k][i].0 == 0.0 {
+                        if dp[[i0, i, l]].0 == 0.0 {
                             break;
                         }
                     }
@@ -171,31 +147,161 @@ fn optimize_waypoints<T: Point>(
                     path.reverse();
                     path
                 };
+                best = (i0, iL, dp[[i0, iL, L]].0, path);
 
-                println!(
-                    "best (i_first, i_last) = ({}, {})",
-                    best_i_first, best_i_last
-                );
-                println!("best distance = {}", best_distance);
-                println!("best path = {:?}", best_path);
-                println!("-------------------------------------");
+                dbg!(&best);
+            }
+        }
+
+        dbg!(inadmissable_best_distance);
+
+        if inadmissable_best_distance < best.2 {
+            println!("exiting early...");
+            break;
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////// Do it again /////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////
+
+/*
+    let mut i = 0;
+    let mut points_index = Vec::new();
+    dbg!(&best);
+    while i < points.len() {
+        for &j in &best.3 {
+            if (i as isize - j as isize).abs() as usize <= STRIDE {
+                // points_index.push(i);
+                break;
+            }
+        }
+        i += 1;
+    }
+    let n = points_index.len();
+    dbg!(points_index.len());
+*/
+    let old_points_index = points_index;
+
+    let mut points_index = Vec::new();
+
+    for i in 0..points.len() {
+        for &j in &best.3 {
+            if (i as isize - old_points_index[j] as isize).abs() as usize <= STRIDE {
+                points_index.push(i);
+                break;
             }
         }
     }
 
-    return (best_distance, best_path);
-}
+    let n = points_index.len();
+    dbg!(points_index.len());
 
-fn gen_distances<T: Point>(points: &[T]) -> Vec<Vec<f64>> {
-    let n = points.len();
-    let mut distances = vec![vec![0.0; n]; n];
+    let mut distances = Array::from_elem((n, n), 0.0);
 
     for j in 1..n {
         for i in 0..j {
-            let dist = haversine_distance(&points[i], &points[j]);
-            distances[i][j] = dist;
+            distances[[i, j]] = haversine_distance(&points[points_index[i]], &points[points_index[j]]);
         }
     }
 
-    distances
+    let mut inadmissable_best_distance;
+    let mut best = (0, 0, 0.0, vec![1]); //Vec::new());
+    let mut dp = Array::from_elem((n, n, L + 1), (0.0, n));
+    let mut dp_sub = Array::from_elem((n, n, L + 1), 0.0);
+
+    for di in (1..n).rev() {
+        dbg!(di);
+
+        // fill in next dp
+        let i0 = n - 1 - di;
+
+        for j in ((i0 + 1)..n).rev() {
+            dp[[i0, j, 1]] = (distances[[i0, j]], i0);
+        }
+
+        for l in 2..=L {
+            for j in (i0 + 1)..n {
+                for i in i0..j {
+                    if dp[[i0, j, l]].0 < dp[[i0, i, l - 1]].0 + distances[[i, j]] {
+                        dp[[i0, j, l]] = (dp[[i0, i, l - 1]].0 + distances[[i, j]], i);
+                    }
+                }
+            }
+        }
+
+        for l in 1..=L {
+            for j in (i0 + 1)..n {
+                for i in i0..j {
+                    if dp_sub[[i0, j, l]] < dp_sub[[i0, i, l]] {
+                        dp_sub[[i0, j, l]] = dp_sub[[i0, i, l]];
+                    }
+                    if dp_sub[[i0, j, l]] < dp_sub[[i0, i, l - 1]] + distances[[i, j]] {
+                        dp_sub[[i0, j, l]] = dp_sub[[i0, i, l - 1]] + distances[[i, j]];
+                    }
+                }
+            }
+        }
+
+        inadmissable_best_distance = 0.0;
+
+        for i0 in 0..(n - di) {
+            let iL = i0 + di;
+
+            if inadmissable_best_distance < dp_sub[[i0, iL, L]] {
+                inadmissable_best_distance = dp_sub[[i0, iL, L]];
+            }
+
+            if points[points_index[i0]].altitude() > points[points_index[iL]].altitude() + 1000 {
+                continue;
+            }
+
+            if best.2 < dp[[i0, iL, L]].0 {
+                let path = {
+                    let mut path = vec![iL];
+
+                    for l in (1..=L).rev() {
+                        let i = *path.last().unwrap();
+                        path.push(dp[[i0, i, l]].1);
+
+                        // We've reached the beginning of the path
+                        if dp[[i0, i, l]].0 == 0.0 {
+                            break;
+                        }
+                    }
+
+                    path.reverse();
+                    path
+                };
+                best = (i0, iL, dp[[i0, iL, L]].0, path);
+
+                dbg!(&best);
+            }
+        }
+
+        dbg!(inadmissable_best_distance);
+
+        if inadmissable_best_distance < best.2 {
+            println!("exiting early...");
+            break;
+        }
+    }
+
+    // Finally we can return...
+
+    return [
+        points_index[best.3[0]],
+        points_index[best.3[1]],
+        points_index[best.3[2]],
+        points_index[best.3[3]],
+        points_index[best.3[4]],
+        points_index[best.3[5]],
+        points_index[best.3[6]]
+    ];
 }

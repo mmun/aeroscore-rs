@@ -1,5 +1,6 @@
 extern crate failure;
 extern crate flat_projection;
+extern crate ndarray;
 extern crate ord_subset;
 
 #[cfg(feature = "rayon")]

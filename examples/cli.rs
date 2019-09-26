@@ -61,6 +61,8 @@ fn analyze(path: &str) {
 
     // 09:02:05
     let release_seconds = 9 * 3600 + 2 * 60 + 5;
+    // 10:28:05
+    // let release_seconds = 10 * 3600 + 28 * 60 + 5;
 
     let fixes = BufReader::new(file)
         .lines()
@@ -84,12 +86,22 @@ fn analyze(path: &str) {
         })
         .collect::<Vec<_>>();
 
+    println!("num points: {}", fixes.len());
+
     let result = olc::optimize(&fixes).unwrap();
+
+    println!("{:?}", fixes[result.indices[0]]);
+    println!("{:?}", fixes[result.indices[1]]);
+    println!("{:?}", fixes[result.indices[2]]);
+    println!("{:?}", fixes[result.indices[3]]);
+    println!("{:?}", fixes[result.indices[4]]);
+    println!("{:?}", fixes[result.indices[5]]);
+    println!("{:?}", fixes[result.indices[6]]);
 
     println!("distance: {:.2} km", result.distance);
 
-    let start_fix = &fixes[result.points[0]];
-    let finish_fix = &fixes[result.points[6]];
+    let start_fix = &fixes[result.indices[0]];
+    let finish_fix = &fixes[result.indices[6]];
 
     let delta_alt = start_fix.altitude - finish_fix.altitude;
     if delta_alt > 1000 {
